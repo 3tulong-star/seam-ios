@@ -68,32 +68,60 @@ struct ContentView: View {
             
             // Language Selector - Large touch area
             HStack(spacing: 0) {
+                // Lang A Button
                 Menu {
                     ForEach(supportedLangs) { lang in
                         Button(lang.name) { vm.langA = lang }
                     }
                 } label: {
-                    Text(vm.langA.name)
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 44)
-                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                    HStack {
+                        Text(vm.langA.name)
+                            .font(.system(size: 16, weight: .semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12))
+                            .opacity(0.5)
+                    }
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .contentShape(Rectangle()) // Make entire area tappable
                 }
                 
-                Image(systemName: "arrow.left.arrow.right")
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 8)
+                // Swap Button
+                Button(action: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                        vm.swapLanguages()
+                    }
+                }) {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.blue)
+                        .padding(10)
+                        .background(Color.blue.opacity(0.1))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.horizontal, 8)
                 
+                // Lang B Button
                 Menu {
                     ForEach(supportedLangs) { lang in
                         Button(lang.name) { vm.langB = lang }
                     }
                 } label: {
-                    Text(vm.langB.name)
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 44)
-                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                    HStack {
+                        Text(vm.langB.name)
+                            .font(.system(size: 16, weight: .semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12))
+                            .opacity(0.5)
+                    }
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .contentShape(Rectangle())
                 }
             }
             .background(Color(UIColor.secondarySystemGroupedBackground))

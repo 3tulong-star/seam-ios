@@ -83,6 +83,20 @@ final class ConversationViewModel: ObservableObject {
         }
     }
 
+    func swapLanguages() {
+        log("Swapping languages: \(langA.name) <-> \(langB.name)")
+        let temp = langA
+        langA = langB
+        langB = temp
+    }
+
+    func swapLanguages() {
+        log("Swapping languages: \(langA.name) <-> \(langB.name)")
+        let temp = langA
+        langA = langB
+        langB = temp
+    }
+
     func speakMessage(_ m: ChatMessage) {
         guard let text = m.translated, !text.isEmpty else { return }
         let target = (m.side == .a) ? langB.id : langA.id
