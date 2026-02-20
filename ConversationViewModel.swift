@@ -14,6 +14,10 @@ final class ConversationViewModel: ObservableObject {
     @Published var isHoldingA = false
     @Published var isHoldingB = false
     @Published var messages: [ChatMessage] = []
+    
+    // 控制语言选择弹窗
+    @Published var showingPickerA = false
+    @Published var showingPickerB = false
 
     private let wsClient = RealtimeWSClient()
     private let streamer = AudioStreamer()
@@ -84,6 +88,10 @@ final class ConversationViewModel: ObservableObject {
     }
 
     func swapLanguages() {
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.prepare()
+        generator.impactOccurred()
+        
         log("Swapping languages: \(langA.name) <-> \(langB.name)")
         let temp = langA
         langA = langB
