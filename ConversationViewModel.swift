@@ -32,6 +32,9 @@ final class ConversationViewModel: ObservableObject {
         print("[VM][\(ts)] \(msg)")
     }
 
+    // MARK: - Finalize control
+    private var isFinalizing: Bool = false
+
     init() {
         streamer.onAudioBuffer = { [weak self] base64 in
             self?.wsClient.sendAudio(base64: base64)
@@ -62,7 +65,7 @@ final class ConversationViewModel: ObservableObject {
             let dur = holdStartedAt.map { Date().timeIntervalSince($0) } ?? 0
             log(String(format: "A press up (held %.2fs)", dur))
             holdStartedAt = nil
-            stop()
+            stopAndFinalize()
         }
     }
 
@@ -76,7 +79,7 @@ final class ConversationViewModel: ObservableObject {
             let dur = holdStartedAt.map { Date().timeIntervalSince($0) } ?? 0
             log(String(format: "B press up (held %.2fs)", dur))
             holdStartedAt = nil
-            stop()
+            stopAndFinalize()
         }
     }
 
@@ -89,7 +92,11 @@ final class ConversationViewModel: ObservableObject {
     // MARK: - ASR core
 
     private func start(side: Side) {
-        guard activeSide == nil else { return }    // 防止 A/B 同时按
+        // Avoid starting a new utterance while we are waiting for the previous final.
+        guard activeSide == nil, isFinalizing == false else {
+            log("Start ignored (activeSide=\(String(describing: activeSide)), isFinalizing=\(isFinalizing))")
+            return
+        }
 
         activeSide = side
         let msg = ChatMessage(side: side)
@@ -100,19 +107,35 @@ final class ConversationViewModel: ObservableObject {
         log("WS connecting to: \(wsURL.absoluteString) lang: \(sourceLang)")
         wsClient.connect(url: wsURL, lang: sourceLang)
 
-        do { 
-            try streamer.start() 
+        do {
+            try streamer.start()
             log("Streamer started")
-        } catch { 
-            log("Audio start error: \(error)") 
+        } catch {
+            log("Audio start error: \(error)")
         }
     }
 
-    private func stop() {
-        log("Stopping streamer and finishing WS")
+    /// Stop recording and ask server to finalize, but keep WS open until final arrives.
+    private func stopAndFinalize() {
+        log("Stopping streamer and finishing WS (wait final)")
         streamer.stop()
+
+        isFinalizing = true
         wsClient.finish()
-        wsClient.disconnect() // 清理干净，避免下次 connect 报 socket not connected
+
+        // Fallback: if final doesn't arrive soon, force cleanup to avoid hanging.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            if self.isFinalizing {
+                self.log("Final timeout, force disconnect")
+                self.isFinalizing = false
+                self.cleanupSession()
+            }
+        }
+    }
+
+    private func cleanupSession() {
+        wsClient.disconnect()
         activeSide = nil
         activeMsgId = nil
     }
@@ -125,7 +148,15 @@ final class ConversationViewModel: ObservableObject {
 
     private func applyFinal(_ text: String) async {
         log("ASR Final received: \(text)")
-        guard let idx = messages.indices.last else { return }
+
+        // Final received, we can leave finalizing state now.
+        isFinalizing = false
+
+        guard let idx = messages.indices.last else {
+            cleanupSession()
+            return
+        }
+
         messages[idx].originalFinal = text
         messages[idx].originalPartial = ""
 
@@ -146,6 +177,9 @@ final class ConversationViewModel: ObservableObject {
             log("Translate error: \(error)")
             messages[idx].translated = "[翻译失败]"
         }
+
+        // Now safe to close the WS session.
+        cleanupSession()
     }
 
     // MARK: - 翻译
