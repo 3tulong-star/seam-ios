@@ -2,225 +2,232 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var vm = ConversationViewModel()
-
+    
     var body: some View {
-        ZStack {
-            Color(red: 0.95, green: 0.95, blue: 0.97).ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                // Header: Language Selector
-                languageHeader
-
-                // Chat Area
-                chatArea
-
-                // Footer: Control Buttons
-                controlDock
+        VStack(spacing: 0) {
+            // Header
+            headerView
+            
+            // Chat Area
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 16) {
+                        ForEach(vm.messages) { message in
+                            MessageBubble(message: message) {
+                                vm.speakMessage(message)
+                            }
+                            .id(message.id)
+                        }
+                        
+                        // Active Recording/Finalizing Indicator
+                        if let lastMsg = vm.messages.last, lastMsg.originalFinal == nil {
+                            // Already handled by bubble logic, but we could add extra loading here
+                        }
+                    }
+                    .padding()
+                }
+                .onChange(of: vm.messages.count) { _ in
+                    scrollToBottom(proxy: proxy)
+                }
+                // Also scroll when partial text updates or translation arrives
+                .onChange(of: vm.messages.last?.originalPartial) { _ in
+                    scrollToBottom(proxy: proxy)
+                }
+                .onChange(of: vm.messages.last?.translated) { _ in
+                    scrollToBottom(proxy: proxy)
+                }
             }
+            .background(Color(UIColor.systemGroupedBackground))
+            
+            // Footer
+            footerView
         }
+        .edgesIgnoringSafeArea(.bottom)
     }
-
-    // MARK: - Header
-    private var languageHeader: some View {
+    
+    private var headerView: some View {
         VStack(spacing: 12) {
             HStack {
                 Text("Seam Translate")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.headline)
+                
                 Spacer()
-                HStack(spacing: 4) {
-                    Image(systemName: vm.autoSpeak ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                    Toggle("", isOn: $vm.autoSpeak)
-                        .labelsHidden()
-                        .scaleEffect(0.8)
-                }
-                .foregroundColor(.blue)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-
-            HStack(spacing: 0) {
-                Picker("Source", selection: $vm.langA) {
-                    ForEach(supportedLangs) { opt in
-                        Text(opt.name).tag(opt)
+                
+                Button(action: {
+                    vm.autoSpeak.toggle()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: vm.autoSpeak ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        Text("Auto Speak")
                     }
+                    .font(.caption)
+                    .foregroundColor(.blue)
                 }
-                .pickerStyle(.menu)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-
+            }
+            .padding(.horizontal)
+            
+            // Language Selector - Large touch area
+            HStack(spacing: 0) {
+                Menu {
+                    ForEach(supportedLangs) { lang in
+                        Button(lang.name) { vm.langA = lang }
+                    }
+                } label: {
+                    Text(vm.langA.name)
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(Color(UIColor.secondarySystemGroupedBackground))
+                }
+                
                 Image(systemName: "arrow.left.arrow.right")
-                    .font(.system(size: 14))
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 8)
-
-                Picker("Target", selection: $vm.langB) {
-                    ForEach(supportedLangs) { opt in
-                        Text(opt.name).tag(opt)
+                
+                Menu {
+                    ForEach(supportedLangs) { lang in
+                        Button(lang.name) { vm.langB = lang }
                     }
+                } label: {
+                    Text(vm.langB.name)
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(Color(UIColor.secondarySystemGroupedBackground))
                 }
-                .pickerStyle(.menu)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
             }
-            .background(Color(red: 0.89, green: 0.89, blue: 0.91))
+            .background(Color(UIColor.secondarySystemGroupedBackground))
             .cornerRadius(12)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            .padding(.horizontal)
         }
-        .background(Color(white: 1, opacity: 0.94))
-        .overlay(
-            VStack {
-                Spacer()
-                Divider()
-            }
-        )
+        .padding(.vertical, 10)
+        .background(Color(UIColor.systemBackground))
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
     }
-
-    // MARK: - Chat Area
-    private var chatArea: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 16) {
-                    ForEach(vm.messages) { m in
-                        MessageBubble(m: m) {
-                            vm.speakMessage(m)
-                        }
-                        .id(m.id)
-                    }
-                    
-                    if vm.isHoldingA || vm.isHoldingB {
-                        HStack {
-                            if vm.isHoldingB { Spacer() }
-                            Text(vm.partialText.isEmpty ? "..." : vm.partialText)
-                                .font(.system(size: 14))
-                                .italic()
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 12)
-                            if vm.isHoldingA { Spacer() }
-                        }
-                        .id("bottom_partial")
-                    }
-                }
-                .padding(16)
-            }
-            .onChange(of: vm.messages.count) { _ in
-                scrollToBottom(proxy)
-            }
-            .onChange(of: vm.partialText) { _ in
-                scrollToBottom(proxy)
-            }
-        }
-    }
-
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        withAnimation {
-            if !vm.partialText.isEmpty {
-                proxy.scrollTo("bottom_partial", anchor: .bottom)
-            } else if let lastId = vm.messages.last?.id {
-                proxy.scrollTo(lastId, anchor: .bottom)
-            }
-        }
-    }
-
-    // MARK: - Footer
-    private var controlDock: some View {
+    
+    private var footerView: some View {
         VStack(spacing: 0) {
-            Divider()
             HStack(spacing: 16) {
-                HoldToTalkButton(
+                HoldButton(
                     title: "A 按住说",
                     isHolding: vm.isHoldingA,
-                    color: Color(red: 0.56, green: 0.56, blue: 0.58)
+                    color: .gray,
+                    activeColor: .gray.opacity(0.8)
                 ) { pressing in
                     vm.pressAChanged(pressing)
                 }
-
-                HoldToTalkButton(
+                
+                HoldButton(
                     title: "B 按住说",
                     isHolding: vm.isHoldingB,
-                    color: .blue
+                    color: .blue,
+                    activeColor: .blue.opacity(0.8)
                 ) { pressing in
                     vm.pressBChanged(pressing)
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal)
             .padding(.top, 16)
-            .padding(.bottom, 34)
-            .background(Color(white: 1, opacity: 0.94))
+            .padding(.bottom, 40) // Extra padding for home indicator
+            .background(Color(UIColor.systemBackground))
+            .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: -2)
+        }
+    }
+    
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        guard let last = vm.messages.last else { return }
+        withAnimation {
+            proxy.scrollTo(last.id, anchor: .bottom)
         }
     }
 }
 
-// MARK: - Subviews
-
 struct MessageBubble: View {
-    let m: ChatMessage
-    let onSpeak: () -> Void
-
+    let message: ChatMessage
+    let onPlay: () -> Void
+    
     var body: some View {
         HStack {
-            if m.side == .b { Spacer(minLength: 40) }
-
+            if message.side == .b { Spacer(minLength: 60) }
+            
             VStack(alignment: .leading, spacing: 4) {
-                if let original = m.originalFinal {
-                    Text(original)
-                        .font(.system(size: 13))
-                        .opacity(0.7)
-                }
+                // Original text (smaller, muted)
+                Text(message.originalFinal ?? message.originalPartial)
+                    .font(.system(size: 13))
+                    .opacity(0.7)
                 
+                // Translated text (larger)
                 HStack(alignment: .bottom, spacing: 8) {
-                    Text(m.translated ?? "...")
+                    Text(message.translated ?? (message.originalFinal != nil ? "..." : ""))
                         .font(.system(size: 16))
+                        .lineLead(1.4)
                     
-                    if m.translated != nil {
-                        Button(action: onSpeak) {
+                    if message.translated != nil {
+                        Button(action: onPlay) {
                             Image(systemName: "speaker.wave.2.fill")
                                 .font(.system(size: 14))
                         }
-                        .foregroundColor(m.side == .a ? .primary : .white)
-                        .opacity(0.6)
+                        .foregroundColor(message.side == .b ? .white : .blue)
                     }
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(m.side == .a ? Color(red: 0.91, green: 0.91, blue: 0.92) : Color.blue)
-            .foregroundColor(m.side == .a ? .black : .white)
-            .clipShape(BubbleShape(side: m.side))
-            .shadow(color: Color.black.opacity(0.05), radius: 2, y: 1)
-
-            if m.side == .a { Spacer(minLength: 40) }
+            .background(bubbleColor)
+            .foregroundColor(textColor)
+            .cornerRadius(18)
+            .overlay(
+                bubbleTail, alignment: message.side == .a ? .bottomLeading : .bottomTrailing
+            )
+            
+            if message.side == .a { Spacer(minLength: 60) }
+        }
+    }
+    
+    private var bubbleColor: Color {
+        message.side == .a ? Color(UIColor.secondarySystemGroupedBackground) : Color.blue
+    }
+    
+    private var textColor: Color {
+        message.side == .a ? .primary : .white
+    }
+    
+    private var bubbleTail: some View {
+        Group {
+            if message.side == .a {
+                // Tail placeholder logic or simple corner radius adjustment
+            } else {
+                // Tail placeholder
+            }
         }
     }
 }
 
-struct BubbleShape: Shape {
-    let side: Side
-    func path(in rect: CGRect) -> Path {
-        let path = UIBezierPath(roundedRect: rect, 
-                               byRoundingCorners: [.topLeft, .topRight, side == .a ? .bottomRight : .bottomLeft], 
-                               cornerRadii: CGSize(width: 18, height: 18))
-        return Path(path.cgPath)
-    }
-}
-
-struct HoldToTalkButton: View {
+struct HoldButton: View {
     let title: String
     let isHolding: Bool
     let color: Color
+    let activeColor: Color
     let onPressingChanged: (Bool) -> Void
-
+    
     var body: some View {
         Text(isHolding ? "正在听..." : title)
             .font(.system(size: 16, weight: .bold))
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)
             .frame(height: 54)
-            .background(isHolding ? color.opacity(0.8) : color)
+            .background(isHolding ? activeColor : color)
             .cornerRadius(27)
             .scaleEffect(isHolding ? 0.96 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: isHolding)
             .onLongPressGesture(minimumDuration: 0.1, pressing: { pressing in
                 onPressingChanged(pressing)
             }, perform: {})
+    }
+}
+
+extension View {
+    func lineLead(_ value: CGFloat) -> some View {
+        self.lineSpacing(value) // Simplified for mock logic
     }
 }
