@@ -64,7 +64,12 @@ struct ContentView: View {
             .padding(.bottom, 12)
         }
         .background(Color(white: 1, opacity: 0.94).blur(radius: 0.5))
-        .overlay(Divider().alignment(.bottom), alignment: .bottom)
+        .overlay(
+            VStack {
+                Spacer()
+                Divider()
+            }
+        )
     }
 
     // MARK: - Chat Area
@@ -94,10 +99,10 @@ struct ContentView: View {
                 }
                 .padding(16)
             }
-            .onChange(of: vm.messages.count) { _ in
+            .onChange(of: vm.messages.count) { newValue in
                 scrollToBottom(proxy)
             }
-            .onChange(of: vm.partialText) { _ in
+            .onChange(of: vm.partialText) { newValue in
                 scrollToBottom(proxy)
             }
         }
@@ -168,7 +173,7 @@ struct MessageBubble: View {
                             Image(systemName: "speaker.wave.2.fill")
                                 .font(.system(size: 14))
                         }
-                        .foregroundColor(.primary)
+                        .foregroundColor(m.side == .a ? .primary : .white)
                         .opacity(0.6)
                     }
                 }
