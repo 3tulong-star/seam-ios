@@ -40,7 +40,9 @@ struct ContentView: View {
 
             HStack(spacing: 0) {
                 Picker("Source", selection: $vm.langA) {
-                    ForEach(supportedLangs) { Text($0.name).tag($0) }
+                    ForEach(supportedLangs) { opt in
+                        Text(opt.name).tag(opt)
+                    }
                 }
                 .pickerStyle(.menu)
                 .frame(maxWidth: .infinity)
@@ -52,7 +54,9 @@ struct ContentView: View {
                     .padding(.horizontal, 8)
 
                 Picker("Target", selection: $vm.langB) {
-                    ForEach(supportedLangs) { Text($0.name).tag($0) }
+                    ForEach(supportedLangs) { opt in
+                        Text(opt.name).tag(opt)
+                    }
                 }
                 .pickerStyle(.menu)
                 .frame(maxWidth: .infinity)
@@ -63,7 +67,7 @@ struct ContentView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
         }
-        .background(Color(white: 1, opacity: 0.94).blur(radius: 0.5))
+        .background(Color(white: 1, opacity: 0.94))
         .overlay(
             VStack {
                 Spacer()
@@ -99,10 +103,10 @@ struct ContentView: View {
                 }
                 .padding(16)
             }
-            .onChange(of: vm.messages.count) { newValue in
+            .onChange(of: vm.messages.count) { _ in
                 scrollToBottom(proxy)
             }
-            .onChange(of: vm.partialText) { newValue in
+            .onChange(of: vm.partialText) { _ in
                 scrollToBottom(proxy)
             }
         }
@@ -141,7 +145,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
-            .padding(.bottom, 34) // For Home Indicator
+            .padding(.bottom, 34)
             .background(Color(white: 1, opacity: 0.94))
         }
     }
@@ -215,7 +219,6 @@ struct HoldToTalkButton: View {
             .background(isHolding ? color.opacity(0.8) : color)
             .cornerRadius(27)
             .scaleEffect(isHolding ? 0.96 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: isHolding)
             .onLongPressGesture(minimumDuration: 0.1, pressing: { pressing in
                 onPressingChanged(pressing)
             }, perform: {})
