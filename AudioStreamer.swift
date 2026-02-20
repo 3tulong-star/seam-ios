@@ -8,7 +8,7 @@ final class AudioStreamer: NSObject {
 
     func start() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
         try session.setPreferredSampleRate(16000)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
 

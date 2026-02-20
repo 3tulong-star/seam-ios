@@ -26,14 +26,14 @@ struct ContentView: View {
                     }
                     .padding()
                 }
-                .onChange(of: vm.messages.count) { _ in
+                .onChange(of: vm.messages.count) { oldValue, newValue in
                     scrollToBottom(proxy: proxy)
                 }
                 // Also scroll when partial text updates or translation arrives
-                .onChange(of: vm.messages.last?.originalPartial) { _ in
+                .onChange(of: vm.messages.last?.originalPartial) { oldValue, newValue in
                     scrollToBottom(proxy: proxy)
                 }
-                .onChange(of: vm.messages.last?.translated) { _ in
+                .onChange(of: vm.messages.last?.translated) { oldValue, newValue in
                     scrollToBottom(proxy: proxy)
                 }
             }
