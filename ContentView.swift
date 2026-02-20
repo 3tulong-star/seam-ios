@@ -137,19 +137,19 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
                 HoldButton(
-                    title: "A 按住说",
+                    title: vm.langA.holdToTalkText,
                     isHolding: vm.isHoldingA,
-                    color: .gray,
-                    activeColor: .gray.opacity(0.8)
+                    color: Color(UIColor.systemGray2),
+                    activeColor: Color(UIColor.systemGray)
                 ) { pressing in
                     vm.pressAChanged(pressing)
                 }
                 
                 HoldButton(
-                    title: "B 按住说",
+                    title: vm.langB.holdToTalkText,
                     isHolding: vm.isHoldingB,
                     color: .blue,
-                    activeColor: .blue.opacity(0.8)
+                    activeColor: Color(UIColor.systemBlue).opacity(0.8)
                 ) { pressing in
                     vm.pressBChanged(pressing)
                 }

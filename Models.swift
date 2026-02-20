@@ -8,13 +8,14 @@ enum Side {
 struct LangOption: Identifiable, Equatable, Hashable {
     let id: String      // 语言 code, 例如 "zh"
     let name: String    // 展示名, 例如 "中文"
+    let holdToTalkText: String // 按住说话的本地化文本
 }
 
 let supportedLangs: [LangOption] = [
-    .init(id: "zh", name: "中文"),
-    .init(id: "en", name: "English"),
-    .init(id: "ja", name: "日本語"),
-    .init(id: "ko", name: "한국어")
+    .init(id: "zh", name: "中文", holdToTalkText: "按住说话"),
+    .init(id: "en", name: "English", holdToTalkText: "Hold to Talk"),
+    .init(id: "ja", name: "日本語", holdToTalkText: "押して話す"),
+    .init(id: "ko", name: "한국어", holdToTalkText: "누르고 말하기")
 ]
 
 struct ChatMessage: Identifiable, Equatable {
