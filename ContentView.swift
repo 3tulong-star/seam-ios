@@ -69,11 +69,11 @@ struct ContentView: View {
             // Language Selector - Large touch area
             HStack(spacing: 0) {
                 // Lang A Button
-                Menu {
-                    ForEach(supportedLangs) { lang in
-                        Button(lang.name) { vm.langA = lang }
-                    }
-                } label: {
+                Button(action: {
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.impactOccurred()
+                    vm.showingPickerA = true
+                }) {
                     HStack {
                         Text(vm.langA.name)
                             .font(.system(size: 16, weight: .semibold))
@@ -85,7 +85,15 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 44)
                     .background(Color(UIColor.secondarySystemGroupedBackground))
-                    .contentShape(Rectangle()) // Make entire area tappable
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .confirmationDialog("选择语言", isPresented: $vm.showingPickerA, titleVisibility: .visible) {
+                    ForEach(supportedLangs) { lang in
+                        Button(lang.name) {
+                            vm.langA = lang
+                        }
+                    }
                 }
                 
                 // Swap Button
@@ -105,11 +113,11 @@ struct ContentView: View {
                 .padding(.horizontal, 8)
                 
                 // Lang B Button
-                Menu {
-                    ForEach(supportedLangs) { lang in
-                        Button(lang.name) { vm.langB = lang }
-                    }
-                } label: {
+                Button(action: {
+                    let generator = UIImpactFeedbackGenerator(style: .light)
+                    generator.impactOccurred()
+                    vm.showingPickerB = true
+                }) {
                     HStack {
                         Text(vm.langB.name)
                             .font(.system(size: 16, weight: .semibold))
@@ -122,6 +130,14 @@ struct ContentView: View {
                     .frame(height: 44)
                     .background(Color(UIColor.secondarySystemGroupedBackground))
                     .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+                .confirmationDialog("选择语言", isPresented: $vm.showingPickerB, titleVisibility: .visible) {
+                    ForEach(supportedLangs) { lang in
+                        Button(lang.name) {
+                            vm.langB = lang
+                        }
+                    }
                 }
             }
             .background(Color(UIColor.secondarySystemGroupedBackground))
