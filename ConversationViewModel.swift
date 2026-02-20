@@ -22,6 +22,16 @@ final class ConversationViewModel: ObservableObject {
     private var activeSide: Side? = nil
     private var activeMsgId: UUID? = nil
 
+    // MARK: - Debug info
+    private var holdStartedAt: Date? = nil
+
+    private func log(_ msg: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let ts = formatter.string(from: Date())
+        print("[VM][\(ts)] \(msg)")
+    }
+
     init() {
         streamer.onAudioBuffer = { [weak self] base64 in
             self?.wsClient.sendAudio(base64: base64)
@@ -44,12 +54,30 @@ final class ConversationViewModel: ObservableObject {
 
     func pressAChanged(_ pressing: Bool) {
         isHoldingA = pressing
-        pressing ? start(side: .a) : stop()
+        if pressing {
+            holdStartedAt = Date()
+            log("A press down")
+            start(side: .a)
+        } else {
+            let dur = holdStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+            log(String(format: "A press up (held %.2fs)", dur))
+            holdStartedAt = nil
+            stop()
+        }
     }
 
     func pressBChanged(_ pressing: Bool) {
         isHoldingB = pressing
-        pressing ? start(side: .b) : stop()
+        if pressing {
+            holdStartedAt = Date()
+            log("B press down")
+            start(side: .b)
+        } else {
+            let dur = holdStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+            log(String(format: "B press up (held %.2fs)", dur))
+            holdStartedAt = nil
+            stop()
+        }
     }
 
     func speakMessage(_ m: ChatMessage) {
@@ -69,14 +97,19 @@ final class ConversationViewModel: ObservableObject {
         activeMsgId = msg.id
 
         let sourceLang = (side == .a) ? langA.id : langB.id
-        print("WS connecting to:", wsURL.absoluteString, "lang:", sourceLang)
+        log("WS connecting to: \(wsURL.absoluteString) lang: \(sourceLang)")
         wsClient.connect(url: wsURL, lang: sourceLang)
 
-        do { try streamer.start() }
-        catch { print("Audio start error:", error) }
+        do { 
+            try streamer.start() 
+            log("Streamer started")
+        } catch { 
+            log("Audio start error: \(error)") 
+        }
     }
 
     private func stop() {
+        log("Stopping streamer and finishing WS")
         streamer.stop()
         wsClient.finish()
         wsClient.disconnect() // 清理干净，避免下次 connect 报 socket not connected
@@ -91,6 +124,7 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func applyFinal(_ text: String) async {
+        log("ASR Final received: \(text)")
         guard let idx = messages.indices.last else { return }
         messages[idx].originalFinal = text
         messages[idx].originalPartial = ""
@@ -100,13 +134,16 @@ final class ConversationViewModel: ObservableObject {
         let target = (side == .a) ? langB.id : langA.id
 
         do {
+            log("Translating (\(source) -> \(target))...")
             let translated = try await translate(text: text, source: source, target: target)
+            log("Translation result: \(translated)")
             messages[idx].translated = translated
             if autoSpeak {
+                log("Auto-speaking...")
                 speak(text: translated, lang: target)
             }
         } catch {
-            print("translate error:", error)
+            log("Translate error: \(error)")
             messages[idx].translated = "[翻译失败]"
         }
     }
@@ -161,6 +198,7 @@ final class ConversationViewModel: ObservableObject {
             u.voice = AVSpeechSynthesisVoice(language: locale)
         }
 
+        log("Speaking (lang: \(lang), voice: \(u.voice?.name ?? "default"))")
         tts.speak(u)
     }
 }
