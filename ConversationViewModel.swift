@@ -44,6 +44,11 @@ final class ConversationViewModel: ObservableObject {
     // MARK: - Finalize control
     private var isFinalizing: Bool = false
 
+    // MARK: - Live idle timeout
+    private var liveIdleTask: Task<Void, Never>? = nil
+    private var liveLastActivityAt: Date = Date()
+    private let liveIdleTimeoutSeconds: TimeInterval = 30
+
     init() {
         setupCallbacks()
     }
@@ -182,11 +187,50 @@ final class ConversationViewModel: ObservableObject {
         log("WS connecting (live) left=\(langA.id) right=\(langB.id)")
         wsClient.connect(url: wsURL, config: cfg)
 
+        // 启动 Live 闲置超时计时
+        resetLiveIdleTimer()
+
         do {
             try streamer.start()
             log("Streamer started (live)")
         } catch {
             log("Audio start error (live): \(error)")
+        }
+    }
+
+    private func resetLiveIdleTimer() {
+        liveLastActivityAt = Date()
+        liveIdleTask?.cancel()
+        liveIdleTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 每秒检查
+                if Date().timeIntervalSince(liveLastActivityAt) >= liveIdleTimeoutSeconds {
+                    log("Live mode idle timeout (30s), stopping...")
+                    await MainActor.run {
+                        if isLiveActive {
+                            isLiveActive = false
+                            stopLiveAndFinalize()
+                        }
+                    }
+                    break
+                }
+            }
+        }
+    }
+
+    private func handleLiveActivityEvent(_ event: [String: Any]) {
+        guard mode == .live, isLiveActive else { return }
+        
+        let type = event["type"] as? String ?? ""
+        // 定义哪些事件算作“有效活动”
+        let activityTypes = [
+            "input_audio_buffer.speech_started",
+            "conversation.item.input_audio_transcription.text",
+            "conversation.item.input_audio_transcription.completed"
+        ]
+        
+        if activityTypes.contains(type) {
+            liveLastActivityAt = Date()
         }
     }
 

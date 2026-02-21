@@ -40,7 +40,7 @@ final class RealtimeWSClient: NSObject, URLSessionWebSocketDelegate {
             "type": "server_vad",
             "threshold": 0.5,
             "prefix_padding_ms": 300,
-            "silence_duration_ms": 500
+            "silence_duration_ms": 1000
         ] : NSNull()
 
         // 首条消息: session.update，带上 UI 模式和左右语言
