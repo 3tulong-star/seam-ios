@@ -21,7 +21,7 @@ final class RealtimeWSClient: NSObject, URLSessionWebSocketDelegate {
     var onError: ((String) -> Void)?
 
     // Debug: 打印原始 WS JSON
-    var debugLogRawMessages: Bool = false
+    var debugLogRawMessages: Bool = true // 默认开启调试日志
 
     func connect(url: URL, config: RealtimeConfig) {
         disconnect()
@@ -35,6 +35,14 @@ final class RealtimeWSClient: NSObject, URLSessionWebSocketDelegate {
         task = t
         t.resume()
 
+        // 决定 turn_detection 配置
+        let turnDetection: Any = (config.mode == "live") ? [
+            "type": "server_vad",
+            "threshold": 0.5,
+            "prefix_padding_ms": 300,
+            "silence_duration_ms": 500
+        ] : NSNull()
+
         // 首条消息: session.update，带上 UI 模式和左右语言
         let msg: [String: Any] = [
             "type": "session.update",
@@ -42,8 +50,7 @@ final class RealtimeWSClient: NSObject, URLSessionWebSocketDelegate {
                 "model": "qwen3-asr-flash-realtime",
                 "input_audio_format": "pcm",
                 "sample_rate": 16000,
-                // 让服务端/ASR自动识别语言，不在这里传 language
-                "turn_detection": NSNull(), // manual 模式
+                "turn_detection": turnDetection,
                 "mode": config.mode,
                 "left_lang": config.leftLang,
                 "right_lang": config.rightLang
@@ -57,8 +64,11 @@ final class RealtimeWSClient: NSObject, URLSessionWebSocketDelegate {
         sendJSON(["type": "input_audio_buffer.append", "audio": base64])
     }
 
-    func finish() {
+    func commit() {
         sendJSON(["type": "input_audio_buffer.commit"])
+    }
+
+    func finish() {
         sendJSON(["type": "session.finish"])
     }
 
@@ -116,6 +126,7 @@ final class RealtimeWSClient: NSObject, URLSessionWebSocketDelegate {
                 onError?("ws error")
             }
         } else {
+            // 如 speech_started, speech_stopped 等
             onPartialEvent?(obj)
         }
     }

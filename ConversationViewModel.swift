@@ -118,7 +118,7 @@ final class ConversationViewModel: ObservableObject {
         if isLiveActive {
             log("Stopping Live mode")
             isLiveActive = false
-            stopAndFinalize()
+            stopLiveAndFinalize()
         } else {
             log("Starting Live mode")
             isLiveActive = true
@@ -172,16 +172,40 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func startLive() {
-        // Live 模式下，开启 VAD 或依赖服务端分句
-        start(side: .a) 
+        // Live 模式不需要预设 side，因为靠服务端 VAD 自动返回 ui_side
+        let cfg = RealtimeConfig(mode: "live", leftLang: langA.id, rightLang: langB.id)
+        log("WS connecting (live) left=\(langA.id) right=\(langB.id)")
+        wsClient.connect(url: wsURL, config: cfg)
+
+        do {
+            try streamer.start()
+            log("Streamer started (live)")
+        } catch {
+            log("Audio start error (live): \(error)")
+        }
     }
 
     private func stopAndFinalize() {
         log("Stopping streamer and finishing WS (wait final)")
         streamer.stop()
         isFinalizing = true
-        wsClient.finish()
+        wsClient.commit() // Manual 模式需要先 commit
+        wsClient.finish() // 再发 session.finish
 
+        startFinalTimeout()
+    }
+
+    private func stopLiveAndFinalize() {
+        log("Stopping streamer and finishing WS (live mode)")
+        streamer.stop()
+        // VAD 模式直接发 finish 即可，服务端会处理完缓冲区并返回最终结果
+        wsClient.finish()
+        
+        startFinalTimeout()
+    }
+
+    private func startFinalTimeout() {
+        isFinalizing = true
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             if self.isFinalizing {
@@ -199,17 +223,18 @@ final class ConversationViewModel: ObservableObject {
         isHoldingA = false
         isHoldingB = false
         isHoldingSingle = false
-        // isLiveActive 不在 cleanup 里重置，由 toggleLive 控制
+        isLiveActive = false
     }
 
     private func applyPartial(_ text: String) {
         guard !text.isEmpty else { return }
-        // 寻找最后一个没有完成的消息，或者当前活动的消息
+        
+        // 查找或创建活动消息
         if let id = activeMsgId, let idx = messages.firstIndex(where: { $0.id == id }) {
             messages[idx].originalPartial = text
         } else {
-            // Live 模式下可能需要自动开启新消息
-            let msg = ChatMessage(side: .a)
+            // 对 Live 模式，当收到第一个 partial 时创建一条新消息
+            let msg = ChatMessage(side: .a) // 默认 side，等 completed 修正
             messages.append(msg)
             activeMsgId = msg.id
             messages[messages.count-1].originalPartial = text
@@ -217,40 +242,49 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func applyFinalEvent(_ event: [String: Any]) async {
-        log("ASR Event received: \(event)")
+        let evType = event["type"] as? String ?? ""
+        log("ASR Event received: \(evType)")
         
-        // 如果是 legacy 模式（dualButton），走原来的 applyFinal 逻辑
-        if mode == .dualButton {
+        if evType == "session.finished" {
+            log("Session finished by server")
             isFinalizing = false
-            if let transcript = event["transcript"] as? String {
-                await processFinalResult(transcript: transcript, side: activeSide ?? .a, source: (activeSide == .a ? langA.id : langB.id), target: (activeSide == .a ? langB.id : langA.id))
-            }
             cleanupSession()
             return
         }
 
-        // Single / Live 模式使用服务端提供的 ui_side
-        guard let transcript = event["transcript"] as? String, !transcript.isEmpty else { return }
-        
-        let uiSideStr = event["ui_side"] as? String ?? "left"
-        let source = event["ui_source_lang"] as? String ?? langA.id
-        let target = event["ui_target_lang"] as? String ?? langB.id
-        let side: Side = (uiSideStr == "right") ? .b : .a
+        // 处理 completed 事件
+        if evType == "conversation.item.input_audio_transcription.completed" {
+            guard let transcript = event["transcript"] as? String, !transcript.isEmpty else {
+                // 如果是 Live 模式且当前正在 finalize，且没有更多内容，则可以清理了
+                if mode == .live && isFinalizing {
+                    cleanupSession()
+                }
+                return 
+            }
 
-        await processFinalResult(transcript: transcript, side: side, source: source, target: target)
+            let uiSideStr = event["ui_side"] as? String ?? "left"
+            let source = event["ui_source_lang"] as? String ?? langA.id
+            let target = event["ui_target_lang"] as? String ?? langB.id
+            let side: Side = (uiSideStr == "right") ? .b : .a
 
-        if mode == .singleButton {
-            isFinalizing = false
-            cleanupSession()
-        } else if mode == .live {
-            // Live 模式保持连接，准备下一句，开启新的活动消息 ID
-            activeMsgId = nil 
+            await processFinalResult(transcript: transcript, side: side, source: source, target: target)
+
+            if mode != .live {
+                isFinalizing = false
+                cleanupSession()
+            } else {
+                // Live 模式保持连接，清除当前消息 ID 引用，以便下一句开启新气泡
+                activeMsgId = nil
+                if isFinalizing {
+                    cleanupSession()
+                }
+            }
         }
     }
 
     private func processFinalResult(transcript: String, side: Side, source: String, target: String) async {
         // 找到当前正在 partial 的消息并固定它，或者新建
-        if let idx = messages.firstIndex(where: { $0.id == activeMsgId }) {
+        if let id = activeMsgId, let idx = messages.firstIndex(where: { $0.id == id }) {
             messages[idx].side = side
             messages[idx].originalFinal = transcript
             messages[idx].originalPartial = ""
@@ -271,7 +305,7 @@ final class ConversationViewModel: ObservableObject {
             let translated = try await translate(text: text, source: source, target: target)
             messages[index].translated = translated
             
-            // Live 模式默认不自动播放 TTS
+            // Live 模式不自动播放 TTS
             if autoSpeak && mode != .live {
                 speak(text: translated, lang: target)
             }
