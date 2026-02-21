@@ -57,6 +57,11 @@ final class ConversationViewModel: ObservableObject {
             Task { @MainActor in self?.applyPartial(text) }
         }
 
+        // 用于 Live 模式的闲置超时：在检测到有效语音事件时重置计时
+        wsClient.onPartialEvent = { [weak self] event in
+            Task { @MainActor in self?.handleLiveActivityEvent(event) }
+        }
+
         wsClient.onFinalEvent = { [weak self] event in
             Task { @MainActor in await self?.applyFinalEvent(event) }
         }
