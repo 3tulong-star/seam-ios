@@ -13,8 +13,13 @@ final class ConversationViewModel: ObservableObject {
     @Published var autoSpeak: Bool = true
     @Published var isHoldingA = false
     @Published var isHoldingB = false
+    @Published var isHoldingSingle = false
+    @Published var isLiveActive = false
     @Published var messages: [ChatMessage] = []
-    
+
+    // 模式：双按钮, 单按钮, 或 Live
+    @Published var mode: ConversationMode = .dualButton
+
     // 控制语言选择弹窗
     @Published var showingPickerA = false
     @Published var showingPickerB = false
@@ -40,6 +45,10 @@ final class ConversationViewModel: ObservableObject {
     private var isFinalizing: Bool = false
 
     init() {
+        setupCallbacks()
+    }
+
+    private func setupCallbacks() {
         streamer.onAudioBuffer = { [weak self] base64 in
             self?.wsClient.sendAudio(base64: base64)
         }
@@ -48,8 +57,8 @@ final class ConversationViewModel: ObservableObject {
             Task { @MainActor in self?.applyPartial(text) }
         }
 
-        wsClient.onFinalText = { [weak self] text in
-            Task { @MainActor in await self?.applyFinal(text) }
+        wsClient.onFinalEvent = { [weak self] event in
+            Task { @MainActor in await self?.applyFinalEvent(event) }
         }
 
         wsClient.onError = { msg in
@@ -60,6 +69,7 @@ final class ConversationViewModel: ObservableObject {
     // MARK: - UI events
 
     func pressAChanged(_ pressing: Bool) {
+        guard mode == .dualButton else { return }
         isHoldingA = pressing
         if pressing {
             holdStartedAt = Date()
@@ -74,6 +84,7 @@ final class ConversationViewModel: ObservableObject {
     }
 
     func pressBChanged(_ pressing: Bool) {
+        guard mode == .dualButton else { return }
         isHoldingB = pressing
         if pressing {
             holdStartedAt = Date()
@@ -87,11 +98,39 @@ final class ConversationViewModel: ObservableObject {
         }
     }
 
+    func singlePressChanged(_ pressing: Bool) {
+        guard mode == .singleButton else { return }
+        isHoldingSingle = pressing
+        if pressing {
+            holdStartedAt = Date()
+            log("Single button press down")
+            startSingleButton()
+        } else {
+            let dur = holdStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+            log(String(format: "Single button press up (held %.2fs)", dur))
+            holdStartedAt = nil
+            stopAndFinalize()
+        }
+    }
+
+    func toggleLive() {
+        guard mode == .live else { return }
+        if isLiveActive {
+            log("Stopping Live mode")
+            isLiveActive = false
+            stopAndFinalize()
+        } else {
+            log("Starting Live mode")
+            isLiveActive = true
+            startLive()
+        }
+    }
+
     func swapLanguages() {
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.prepare()
         generator.impactOccurred()
-        
+
         log("Swapping languages: \(langA.name) <-> \(langB.name)")
         let temp = langA
         langA = langB
@@ -107,20 +146,18 @@ final class ConversationViewModel: ObservableObject {
     // MARK: - ASR core
 
     private func start(side: Side) {
-        // Avoid starting a new utterance while we are waiting for the previous final.
-        guard activeSide == nil, isFinalizing == false else {
-            log("Start ignored (activeSide=\(String(describing: activeSide)), isFinalizing=\(isFinalizing))")
-            return
-        }
+        guard activeSide == nil, isFinalizing == false else { return }
 
         activeSide = side
         let msg = ChatMessage(side: side)
         messages.append(msg)
         activeMsgId = msg.id
 
-        let sourceLang = (side == .a) ? langA.id : langB.id
-        log("WS connecting to: \(wsURL.absoluteString) lang: \(sourceLang)")
-        wsClient.connect(url: wsURL, lang: sourceLang)
+        let wsMode = mode == .dualButton ? "dual_button" : (mode == .singleButton ? "single_button" : "live")
+        let cfg = RealtimeConfig(mode: wsMode, leftLang: langA.id, rightLang: langB.id)
+        
+        log("WS connecting (\(wsMode)) left=\(langA.id) right=\(langB.id)")
+        wsClient.connect(url: wsURL, config: cfg)
 
         do {
             try streamer.start()
@@ -130,15 +167,21 @@ final class ConversationViewModel: ObservableObject {
         }
     }
 
-    /// Stop recording and ask server to finalize, but keep WS open until final arrives.
+    private func startSingleButton() {
+        start(side: .a)
+    }
+
+    private func startLive() {
+        // Live 模式下，开启 VAD 或依赖服务端分句
+        start(side: .a) 
+    }
+
     private func stopAndFinalize() {
         log("Stopping streamer and finishing WS (wait final)")
         streamer.stop()
-
         isFinalizing = true
         wsClient.finish()
 
-        // Fallback: if final doesn't arrive soon, force cleanup to avoid hanging.
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             if self.isFinalizing {
@@ -149,55 +192,94 @@ final class ConversationViewModel: ObservableObject {
         }
     }
 
-    private func cleanupSession() {
+    func cleanupSession() {
         wsClient.disconnect()
         activeSide = nil
         activeMsgId = nil
+        isHoldingA = false
+        isHoldingB = false
+        isHoldingSingle = false
+        // isLiveActive 不在 cleanup 里重置，由 toggleLive 控制
     }
 
     private func applyPartial(_ text: String) {
-        guard let id = activeMsgId,
-              let idx = messages.firstIndex(where: { $0.id == id }) else { return }
-        messages[idx].originalPartial = text
+        guard !text.isEmpty else { return }
+        // 寻找最后一个没有完成的消息，或者当前活动的消息
+        if let id = activeMsgId, let idx = messages.firstIndex(where: { $0.id == id }) {
+            messages[idx].originalPartial = text
+        } else {
+            // Live 模式下可能需要自动开启新消息
+            let msg = ChatMessage(side: .a)
+            messages.append(msg)
+            activeMsgId = msg.id
+            messages[messages.count-1].originalPartial = text
+        }
     }
 
-    private func applyFinal(_ text: String) async {
-        log("ASR Final received: \(text)")
-
-        // Final received, we can leave finalizing state now.
-        isFinalizing = false
-
-        guard let idx = messages.indices.last else {
+    private func applyFinalEvent(_ event: [String: Any]) async {
+        log("ASR Event received: \(event)")
+        
+        // 如果是 legacy 模式（dualButton），走原来的 applyFinal 逻辑
+        if mode == .dualButton {
+            isFinalizing = false
+            if let transcript = event["transcript"] as? String {
+                await processFinalResult(transcript: transcript, side: activeSide ?? .a, source: (activeSide == .a ? langA.id : langB.id), target: (activeSide == .a ? langB.id : langA.id))
+            }
             cleanupSession()
             return
         }
 
-        messages[idx].originalFinal = text
-        messages[idx].originalPartial = ""
+        // Single / Live 模式使用服务端提供的 ui_side
+        guard let transcript = event["transcript"] as? String, !transcript.isEmpty else { return }
+        
+        let uiSideStr = event["ui_side"] as? String ?? "left"
+        let source = event["ui_source_lang"] as? String ?? langA.id
+        let target = event["ui_target_lang"] as? String ?? langB.id
+        let side: Side = (uiSideStr == "right") ? .b : .a
 
-        let side = messages[idx].side
-        let source = (side == .a) ? langA.id : langB.id
-        let target = (side == .a) ? langB.id : langA.id
+        await processFinalResult(transcript: transcript, side: side, source: source, target: target)
 
+        if mode == .singleButton {
+            isFinalizing = false
+            cleanupSession()
+        } else if mode == .live {
+            // Live 模式保持连接，准备下一句，开启新的活动消息 ID
+            activeMsgId = nil 
+        }
+    }
+
+    private func processFinalResult(transcript: String, side: Side, source: String, target: String) async {
+        // 找到当前正在 partial 的消息并固定它，或者新建
+        if let idx = messages.firstIndex(where: { $0.id == activeMsgId }) {
+            messages[idx].side = side
+            messages[idx].originalFinal = transcript
+            messages[idx].originalPartial = ""
+            await translateAndOptionallySpeak(index: idx, source: source, target: target)
+        } else {
+            let m = ChatMessage(side: side)
+            messages.append(m)
+            let lastIdx = messages.count - 1
+            messages[lastIdx].originalFinal = transcript
+            await translateAndOptionallySpeak(index: lastIdx, source: source, target: target)
+        }
+    }
+
+    private func translateAndOptionallySpeak(index: Int, source: String, target: String) async {
+        let text = messages[index].originalFinal ?? ""
         do {
             log("Translating (\(source) -> \(target))...")
             let translated = try await translate(text: text, source: source, target: target)
-            log("Translation result: \(translated)")
-            messages[idx].translated = translated
-            if autoSpeak {
-                log("Auto-speaking...")
+            messages[index].translated = translated
+            
+            // Live 模式默认不自动播放 TTS
+            if autoSpeak && mode != .live {
                 speak(text: translated, lang: target)
             }
         } catch {
             log("Translate error: \(error)")
-            messages[idx].translated = "[翻译失败]"
+            messages[index].translated = "[翻译失败]"
         }
-
-        // Now safe to close the WS session.
-        cleanupSession()
     }
-
-    // MARK: - 翻译
 
     private func translate(text: String, source: String, target: String) async throws -> String {
         let endpoint = httpBase.appendingPathComponent("/api/v1/translate/text")
@@ -215,39 +297,18 @@ final class ConversationViewModel: ObservableObject {
 
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            let s = String(data: data, encoding: .utf8) ?? ""
-            throw NSError(domain: "Translate", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "bad status: \(s)"])
+            throw NSError(domain: "Translate", code: 1)
         }
 
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         return (obj?["translation"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - 系统 TTS
-
     private func speak(text: String, lang: String) {
         let u = AVSpeechUtterance(string: text)
         u.rate = 0.5
-
-        if lang == "zh" {
-            // 尝试指定 Tingting 普通话
-            if let v = AVSpeechSynthesisVoice(identifier: "com.apple.voice.super-compact.zh-CN.Tingting") {
-                u.voice = v
-            } else {
-                u.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-            }
-        } else {
-            let locale: String
-            switch lang {
-            case "ja": locale = "ja-JP"
-            case "ko": locale = "ko-KR"
-            default:   locale = "en-US"
-            }
-            u.voice = AVSpeechSynthesisVoice(language: locale)
-        }
-
-        log("Speaking (lang: \(lang), voice: \(u.voice?.name ?? "default"))")
+        let locale = (lang == "zh") ? "zh-CN" : (lang == "ja" ? "ja-JP" : (lang == "ko" ? "ko-KR" : "en-US"))
+        u.voice = AVSpeechSynthesisVoice(language: locale)
         tts.speak(u)
     }
 }
